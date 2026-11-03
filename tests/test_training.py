@@ -1,4 +1,5 @@
 from src.train import load_splits
+from src.evaluate_adversarial import load_adversarial_data
 
 
 def test_training_splits_are_balanced_and_disjoint():
@@ -27,3 +28,11 @@ def test_held_out_data_covers_quoted_attacks_and_defensive_security():
 
     assert "quoted" in held_out_prompts
     assert "vulnerability" in held_out_prompts
+
+
+def test_adversarial_set_is_balanced_and_disjoint():
+    dataset = load_adversarial_data()
+
+    assert len(dataset) == 48
+    assert dataset["label"].value_counts().to_dict() == {0: 24, 1: 24}
+    assert dataset["category"].nunique() == 8

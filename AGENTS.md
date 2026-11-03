@@ -23,4 +23,4 @@
 - Run tests from the repository root with `python -m pytest -v`.
 - Launch the UI with `streamlit run app.py`.
 - Retrain and evaluate from the repository root with `python src/train.py`; the script reports false positives and false negatives for validation and independent test data.
-- `requirements.txt` is currently empty. Check the active Python environment when dependencies such as Streamlit, joblib, pandas, scikit-learn, or pytest cannot be resolved.
+- `requirements.txt` pins the direct runtime and test dependencies. The CI matrix covers Python 3.13, 3.14, and 3.15.2; keep it aligned with documented support.
