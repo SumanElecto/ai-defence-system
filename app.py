@@ -1,8 +1,8 @@
 
 import streamlit as st
 
-from src.detector import detect_prompt
-from src.threat_analyzer import analyze_threat
+from src.openai_adapter import model_adapter_from_environment
+from src.secure_model import secure_generate
 
 
 st.set_page_config(
@@ -18,100 +18,87 @@ st.markdown(
 )
 
 st.info(
-    "Enter a prompt to analyze it using independent "
-    "prompt injection and cyber threat detection layers."
+    "Analyze the request separately from external text. External content is "
+    "untrusted data and is never merged into the user request. An optional "
+    "model response is generated only after the security gateway allows it."
 )
 
 st.divider()
 
-prompt = st.text_area(
-    "Enter your prompt",
-    placeholder="Example: Ignore all previous instructions...",
-    height=150
-)
-
-
-
-def evaluate_security(prompt):
-
-    # Layer 1: Hybrid prompt injection detector
-    injection_result = detect_prompt(prompt)
-
-    # Layer 2: Cyber threat analyzer
-    threat_result = analyze_threat(prompt)
-
-    categories = set(
-        injection_result.get("detected_categories", [])
+with st.form("source_aware_security_analysis"):
+    user_request = st.text_area(
+        "Trusted user request",
+        placeholder="Example: Summarize the following webpage.",
+        height=120,
+        key="trusted_user_request",
     )
-
-    # Only strong, explicit injection indicators
-    # should trigger an injection-based BLOCK.
-    high_confidence_injection = {
-        "instruction_override",
-        "prompt_extraction",
-        "jailbreak",
-        "data_exfiltration",
-    }
-
-    confirmed_injection = bool(
-        categories.intersection(high_confidence_injection)
+    external_content = st.text_area(
+        "Untrusted external content (optional)",
+        placeholder="Paste webpage, document, or other external text here.",
+        height=180,
+        key="untrusted_external_content",
     )
-
-    # Aggregate decisions
-    if threat_result["decision"] == "BLOCK":
-        final_decision = "BLOCK"
-
-    elif confirmed_injection:
-        final_decision = "BLOCK"
-
-    elif (
-        threat_result["decision"] == "REVIEW"
-        or injection_result["status"] == "SUSPICIOUS"
-    ):
-        final_decision = "REVIEW"
-
-    else:
-        final_decision = "ALLOW"
-
-    return {
-        "final_decision": final_decision,
-        "injection": injection_result,
-        "cyber_threat": threat_result
-    }
+    submitted = st.form_submit_button("Analyze security", type="primary")
 
 
-if st.button("Analyze Security", type="primary"):
+if submitted:
 
-    if not prompt.strip():
-        st.warning("Please enter a prompt.")
+    if not user_request.strip():
+        st.warning("Please enter a trusted user request.")
 
     else:
 
-        results = evaluate_security(prompt)
+        model_configuration_failed = False
+        try:
+            model = model_adapter_from_environment()
+        except Exception:
+            model = None
+            model_configuration_failed = True
 
-        injection = results["injection"]
-        cyber = results["cyber_threat"]
+        gateway_result = secure_generate(
+            user_request,
+            external_content,
+            model=model,
+        )
+        results = gateway_result["security"]
+
         decision = results["final_decision"]
 
         st.divider()
         st.subheader("Overall Security Decision")
 
         if decision == "BLOCK":
-            st.error("🚨 BLOCK — Strong threat indicators detected.")
+            st.error("🚨 BLOCK — Strong threat indicators detected; nothing was sent.")
 
         elif decision == "REVIEW":
             st.warning("⚠️ REVIEW — Additional context is required.")
+            st.caption("Quarantined for manual review; no content is forwarded.")
 
         else:
             st.success("✅ ALLOW — No known threat indicators detected.")
+            if model_configuration_failed:
+                st.error("Model configuration is unavailable; no request was sent.")
+            elif gateway_result["model_status"] == "not_configured":
+                st.info(
+                    "No model provider is configured; no request was sent. "
+                    "Check MODEL_PROVIDER and its credentials, endpoint, and model settings."
+                )
+            elif gateway_result["model_status"] == "responded":
+                st.subheader("Model response")
+                st.write(gateway_result["model_response"])
+            elif gateway_result["model_status"] == "model_error":
+                st.error("The model adapter failed; no response was produced.")
 
-        # Display individual detection layers
-        st.subheader("Detection Layer Results")
+        st.subheader("Trusted user request")
+        request_analysis = results["trusted_request_analysis"]
+        injection = request_analysis["injection"]
+        cyber = request_analysis["cyber_threat"]
 
         col1, col2 = st.columns(2)
 
         with col1:
             st.markdown("#### Prompt Injection")
+            probability = injection["ml_probability"]
 
             st.metric(
                 "Detection status",
@@ -120,7 +107,7 @@ if st.button("Analyze Security", type="primary"):
 
             st.metric(
                 "ML malicious probability",
-                f'{injection["ml_probability"] * 100:.1f}%'
+                f"{probability * 100:.1f}%" if probability is not None else "Unavailable"
             )
 
             st.write(
@@ -159,12 +146,42 @@ if st.button("Analyze Security", type="primary"):
                 cyber["reason"]
             )
 
-        st.divider()
+        external_analysis = results["untrusted_external_content_analysis"]
+        if external_analysis is not None:
+            st.subheader("Untrusted external content")
+            st.caption("Analyzed as data; it is not merged into the trusted request.")
+            if results["external_content_quarantined"]:
+                st.warning("External content is quarantined for manual review.")
+            ext_col1, ext_col2 = st.columns(2)
+
+            with ext_col1:
+                st.metric(
+                    "Prompt-injection status",
+                    external_analysis["injection"]["status"],
+                )
+                st.write(
+                    "Injection categories:",
+                    external_analysis["injection"]["detected_categories"] or "None",
+                )
+
+            with ext_col2:
+                st.metric(
+                    "Cyber threat decision",
+                    external_analysis["cyber_threat"]["decision"],
+                )
+                st.write(
+                    "Reason:",
+                    external_analysis["cyber_threat"]["reason"],
+                )
 
         st.subheader("Technical Analysis")
 
         with st.expander("View complete detection results"):
-            st.json(results)
+            st.json({
+                "security": results,
+                "model_status": gateway_result["model_status"],
+                "forwarded_to_model": gateway_result["forwarded_to_model"],
+            })
 
 st.divider()
 
