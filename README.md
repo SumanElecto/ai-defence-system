@@ -164,13 +164,16 @@ python -m src.evaluate_adversarial --dataset data/attack_families_test.csv
 
 The report includes a decision matrix with `ALLOW`, `REVIEW`, and `BLOCK` as separate outcomes, per-family counts, and each prompt's result. Encoded or embedded payloads are treated as inert text; the evaluator never decodes or executes them. The current five-family set has informed detector changes, so it is now regression data; use a new set for independent performance claims.
 
-Cyber-abuse intent is evaluated separately from the prompt-injection classifier.
-The classifier's `label=1` contract is instruction override or hidden-prompt
-extraction; cyber-intent labels must not be added to its training data. The
-`data/cyber_intent_dev.csv` set is used for rule development. The previously
-evaluated `data/cyber_intent_regression.csv` is regression data; the new
-`data/cyber_intent_holdout.csv` is separate from both and must not be used to
-tune rules. Evaluate it with:
+Cyber-abuse intent is handled separately from the prompt-injection classifier.
+Its dedicated TF-IDF/logistic classifier and explicit threat rules use
+`data/cyber_intent_dev.csv` for development and `data/cyber_intent_regression*.csv`
+for consumed regression examples. The prompt-injection classifier's `label=1`
+contract remains instruction override or hidden-prompt extraction; cyber-intent
+labels must not be added to its training data. The previously
+evaluated `data/cyber_intent_regression.csv` and
+the other `data/cyber_intent_regression*.csv` files are regression data; the new
+`data/cyber_intent_holdout.csv` is excluded from classifier training and must
+not be used to tune rules. Evaluate it with:
 
 ```bash
 python -m src.evaluate_cyber_intent

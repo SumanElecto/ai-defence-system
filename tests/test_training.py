@@ -13,6 +13,7 @@ from src.evaluate_cyber_intent import (
     meets_acceptance_thresholds,
     summarize_results as summarize_cyber_intent_results,
 )
+from src.cyber_intent_classifier import training_paths as cyber_intent_training_paths
 from src.train import load_splits
 
 
@@ -96,18 +97,34 @@ def test_decision_matrix_keeps_allow_review_and_block_separate():
 
 def test_cyber_intent_development_and_holdout_sets_are_balanced_and_disjoint():
     development = load_cyber_intent_dataset(Path("data/cyber_intent_dev.csv"))
-    regression = load_cyber_intent_dataset(Path("data/cyber_intent_regression.csv"))
+    regression_sets = [
+        load_cyber_intent_dataset(path)
+        for path in sorted(Path("data").glob("cyber_intent_regression*.csv"))
+    ]
     holdout = load_cyber_intent_dataset()
 
-    for dataset in (development, regression, holdout):
+    for dataset in (development, *regression_sets, holdout):
         assert len(dataset) == 60
         assert Counter(row["label"] for row in dataset) == {0: 30, 1: 30}
     development_prompts = {row["prompt"].casefold() for row in development}
-    regression_prompts = {row["prompt"].casefold() for row in regression}
     holdout_prompts = {row["prompt"].casefold() for row in holdout}
-    assert development_prompts.isdisjoint(regression_prompts)
-    assert development_prompts.isdisjoint(holdout_prompts)
-    assert regression_prompts.isdisjoint(holdout_prompts)
+    all_prompts = [development_prompts]
+    all_prompts.extend(
+        {row["prompt"].casefold() for row in dataset}
+        for dataset in regression_sets
+    )
+    all_prompts.append(holdout_prompts)
+    for index, prompts in enumerate(all_prompts):
+        for other_prompts in all_prompts[index + 1:]:
+            assert prompts.isdisjoint(other_prompts)
+
+
+def test_cyber_intent_classifier_does_not_train_on_final_holdout():
+    training_files = set(cyber_intent_training_paths())
+
+    assert Path("data/cyber_intent_dev.csv").resolve() in training_files
+    assert Path("data/cyber_intent_holdout.csv").resolve() not in training_files
+    assert all("regression" in path.name for path in training_files if path.name != "cyber_intent_dev.csv")
 
 
 def test_cyber_intent_metrics_count_review_as_detection():

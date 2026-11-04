@@ -65,10 +65,10 @@ def test_block_and_review_never_reach_model():
 
 def test_cyber_intent_development_and_regression_attacks_never_reach_model():
     model = RecordingModel()
-    cases = (
-        load_cyber_intent_dataset(Path("data/cyber_intent_dev.csv"))
-        + load_cyber_intent_dataset(Path("data/cyber_intent_regression.csv"))
-    )
+    regression_paths = sorted(Path("data").glob("cyber_intent_regression*.csv"))
+    cases = load_cyber_intent_dataset(Path("data/cyber_intent_dev.csv"))
+    for regression_path in regression_paths:
+        cases.extend(load_cyber_intent_dataset(regression_path))
 
     for case in cases:
         if case["label"] != 1:
