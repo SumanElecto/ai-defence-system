@@ -79,6 +79,45 @@ Security decisions and provider outcomes are separate. An `ALLOW` result does no
 
 Provider errors do not override the security decision or trigger a fallback. Configuration errors are shown without exception details, and provider failure logs record only the exception type. Generated responses are displayed as text; the app does not execute generated code or tool calls. No output-security screening is implemented, so an input `ALLOW` is not a guarantee about generated content.
 
+## Azure Gateway Benchmark
+
+The independent `data/security_benchmark.csv` holdout contains 150 prompts: 30
+each for benign requests, direct injection, indirect injection, malicious cyber
+intent, and defensive cybersecurity. The loader checks normalized prompt text
+against the other CSV data sets and never uses this file for detector training.
+Each row has an expected binary label; `BLOCK` and `REVIEW` both count as
+detection, while `ALLOW` counts as no alert.
+
+After configuring either Azure provider using the environment settings above, run:
+
+```bash
+python3 benchmark_azure.py --repeats 1
+```
+
+This makes billable model requests for eligible benign and defensive prompts
+that the gateway allows. Labeled attack cases are never sent to Azure, even if
+the detector misses one. `BLOCK` and `REVIEW` results remain quarantined. Missing
+or invalid Azure configuration stops the runner without falling back to OpenAI.
+The per-case terminal lines and `data/azure_benchmark_results.csv` contain decisions,
+labels, call status, response lengths, and timings, but no prompts or generated
+responses.
+
+To check decisions locally without constructing a provider or sending requests:
+
+```bash
+python3 benchmark_azure.py --dry-run
+```
+
+The summary reports TP/FP/FN/TN, detection and false-positive rates, model errors
+and successful-response rate, plus average, median, and p95 latency for successful
+Azure responses. Gateway overhead is total per-case time minus adapter time when
+a model call occurs; otherwise it is total per-case time, so it includes security
+analysis and gateway work rather than representing detector-only latency. Model
+timing includes network time and SDK retries. Runs are sequential, with no warm-up;
+initialization before the loop is excluded. These results are a held-out evaluation,
+not a production performance guarantee. Exit status is nonzero for model errors or
+configuration errors.
+
 ## Dataset and Evaluation
 
 The curated dataset has three fixed, disjoint CSV files, each with `prompt,label` columns:
@@ -124,6 +163,24 @@ python -m src.evaluate_adversarial --dataset data/attack_families_test.csv
 ```
 
 The report includes a decision matrix with `ALLOW`, `REVIEW`, and `BLOCK` as separate outcomes, per-family counts, and each prompt's result. Encoded or embedded payloads are treated as inert text; the evaluator never decodes or executes them. The current five-family set has informed detector changes, so it is now regression data; use a new set for independent performance claims.
+
+Cyber-abuse intent is evaluated separately from the prompt-injection classifier.
+The classifier's `label=1` contract is instruction override or hidden-prompt
+extraction; cyber-intent labels must not be added to its training data. The
+`data/cyber_intent_dev.csv` set is used for rule development. The previously
+evaluated `data/cyber_intent_regression.csv` is regression data; the new
+`data/cyber_intent_holdout.csv` is separate from both and must not be used to
+tune rules. Evaluate it with:
+
+```bash
+python -m src.evaluate_cyber_intent
+```
+
+The evaluator checks normalized prompt overlap with other CSV data, counts both
+`BLOCK` and `REVIEW` as detections, and prints aggregate metrics without prompt
+text. Its gate requires at least 95% detection and at most 5% false positives;
+the command exits nonzero if either threshold is missed. Reviewed holdout results
+are not a production reliability guarantee.
 
 Run the test suite:
 

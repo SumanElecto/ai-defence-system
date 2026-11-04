@@ -5,6 +5,7 @@
 - `src/secure_model.py` is the only supported model gateway; `src/openai_adapter.py` implements OpenAI/Azure OpenAI Responses and Azure Foundry chat adapters.
 - `src/detector.py` applies prompt-injection regex rules and a trained scikit-learn model loaded from `prompt_injection_model.pkl`.
 - `src/threat_analyzer.py` detects explicit cyber-abuse indicators and flags ambiguous cyber language for review.
+- `data/cyber_intent_dev.csv` is the cyber-rule development set; `data/cyber_intent_regression.csv` is consumed regression data; `data/cyber_intent_holdout.csv` is the separate final evaluation set, evaluated with `src/evaluate_cyber_intent.py`. Do not tune against the final holdout. The acceptance gate requires at least 95% detection and at most 5% false positives.
 - `src/train.py` trains on `data/train.csv`, reports validation metrics from `data/validation.csv`, evaluates `data/test.csv`, and overwrites the root model artifact.
 - The train, validation, independent test, adversarial regression, robustness, and attack-family datasets are balanced and disjoint; the evaluator checks exact normalized overlap.
 - `tests/test_detector.py`, `tests/test_integration.py`, and `tests/test_training.py` cover detector behavior, combined decisions, and dataset integrity.

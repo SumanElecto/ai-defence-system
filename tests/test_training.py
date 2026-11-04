@@ -1,9 +1,17 @@
+from collections import Counter
+from pathlib import Path
+
 import pandas as pd
 
 from src.evaluate_adversarial import (
     decision_outcome_matrix,
     load_adversarial_data,
     summarize_decision_rates,
+)
+from src.evaluate_cyber_intent import (
+    load_dataset as load_cyber_intent_dataset,
+    meets_acceptance_thresholds,
+    summarize_results as summarize_cyber_intent_results,
 )
 from src.train import load_splits
 
@@ -45,7 +53,7 @@ def test_adversarial_set_is_balanced_and_disjoint():
 
 
 def test_robustness_set_is_balanced_and_disjoint():
-    dataset = load_adversarial_data("data/robustness_test.csv")
+    dataset = load_adversarial_data(Path("data/robustness_test.csv"))
 
     assert len(dataset) == 48
     assert dataset["label"].value_counts().to_dict() == {0: 24, 1: 24}
@@ -54,7 +62,7 @@ def test_robustness_set_is_balanced_and_disjoint():
 
 
 def test_five_attack_families_are_balanced_and_disjoint():
-    dataset = load_adversarial_data("data/attack_families_test.csv")
+    dataset = load_adversarial_data(Path("data/attack_families_test.csv"))
 
     assert len(dataset) == 20
     assert dataset["label"].value_counts().to_dict() == {0: 10, 1: 10}
@@ -82,5 +90,52 @@ def test_decision_matrix_keeps_allow_review_and_block_separate():
     matrix = decision_outcome_matrix(dataset, ["ALLOW", "REVIEW", "BLOCK", "ALLOW"])
 
     assert list(matrix.columns) == ["ALLOW", "REVIEW", "BLOCK"]
-    assert matrix.loc["actual benign"].to_list() == [1, 1, 0]
-    assert matrix.loc["actual injection"].to_list() == [1, 0, 1]
+    assert list(matrix.loc["actual benign"]) == [1, 1, 0]
+    assert list(matrix.loc["actual injection"]) == [1, 0, 1]
+
+
+def test_cyber_intent_development_and_holdout_sets_are_balanced_and_disjoint():
+    development = load_cyber_intent_dataset(Path("data/cyber_intent_dev.csv"))
+    regression = load_cyber_intent_dataset(Path("data/cyber_intent_regression.csv"))
+    holdout = load_cyber_intent_dataset()
+
+    for dataset in (development, regression, holdout):
+        assert len(dataset) == 60
+        assert Counter(row["label"] for row in dataset) == {0: 30, 1: 30}
+    development_prompts = {row["prompt"].casefold() for row in development}
+    regression_prompts = {row["prompt"].casefold() for row in regression}
+    holdout_prompts = {row["prompt"].casefold() for row in holdout}
+    assert development_prompts.isdisjoint(regression_prompts)
+    assert development_prompts.isdisjoint(holdout_prompts)
+    assert regression_prompts.isdisjoint(holdout_prompts)
+
+
+def test_cyber_intent_metrics_count_review_as_detection():
+    rows = [
+        {"label": 1, "category": "malicious", "decision": "REVIEW"},
+        {"label": 1, "category": "malicious", "decision": "ALLOW"},
+        {"label": 0, "category": "defensive", "decision": "BLOCK"},
+        {"label": 0, "category": "defensive", "decision": "ALLOW"},
+    ]
+
+    summary = summarize_cyber_intent_results(rows)
+
+    assert summary["true_positives"] == 1
+    assert summary["false_positives"] == 1
+    assert summary["false_negatives"] == 1
+    assert summary["true_negatives"] == 1
+
+
+def test_cyber_intent_acceptance_thresholds():
+    assert meets_acceptance_thresholds({
+        "detection_rate": 0.95,
+        "false_positive_rate": 0.05,
+    })
+    assert not meets_acceptance_thresholds({
+        "detection_rate": 0.94,
+        "false_positive_rate": 0.05,
+    })
+    assert not meets_acceptance_thresholds({
+        "detection_rate": 0.95,
+        "false_positive_rate": 0.06,
+    })
