@@ -9,7 +9,7 @@ from src.tool_security import ToolOutputSecurityError, ToolPolicyError, get_auth
 
 st.set_page_config(
     page_title="AI Security Center",
-    page_icon="./assets/ai-security-icon.svg",
+    page_icon="./assets/ai-security-icon.png",
     layout="wide",
 )
 
