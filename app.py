@@ -9,8 +9,8 @@ from src.tool_security import ToolOutputSecurityError, ToolPolicyError, get_auth
 
 st.set_page_config(
     page_title="AI Security Center",
-    page_icon="🛡️",
-    layout="wide"
+    page_icon="./assets/ai-security-icon.svg",
+    layout="wide",
 )
 
 if "security_canary" not in st.session_state:
