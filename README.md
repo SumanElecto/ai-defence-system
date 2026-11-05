@@ -1,6 +1,6 @@
 # AI Security Threat Detection and Defense System
 
-A local Streamlit prototype that screens user requests and external content for prompt-injection and cyber-threat indicators. It combines regular-expression rules, a TF-IDF/logistic-regression classifier, and a separate rule-based threat analyzer. Optional OpenAI, Azure OpenAI, and Azure Foundry integrations generate responses only for requests allowed by the security gateway.
+A local Streamlit prototype that screens user requests and external content for prompt-injection and cyber-threat indicators. It combines regular-expression rules, a TF-IDF/logistic-regression classifier, and a separate rule-based threat analyzer. Optional OpenAI, Anthropic Claude, Azure OpenAI, and Azure Foundry integrations generate responses only through the security gateway.
 
 ## Run Locally
 
@@ -10,15 +10,24 @@ Use Python 3.13 through 3.15.2. The CI matrix covers Python 3.13, 3.14, and 3.15
 python -m pip install -r requirements.txt
 ```
 
-To enable OpenAI responses, set `OPENAI_API_KEY` in the process environment before launching Streamlit. The default model is `gpt-5.5`; set `OPENAI_MODEL` to select another model available to your account. Keep the key out of source files and version control. Without a key, the app performs security analysis only and does not send requests.
+To enable OpenAI responses, set `OPENAI_API_KEY` in the process environment before launching Streamlit. The default model is `gpt-5.5`; set `OPENAI_MODEL` to select another model available to your account. Keep keys out of source files and version control. Without provider credentials, the app performs security analysis only and does not send requests.
 
 Select a provider with `MODEL_PROVIDER` (defaults to `openai`). Configuration is read from the process environment, never from submitted text:
 
 | MODEL_PROVIDER | Required Settings | API |
 | --- | --- | --- |
 | `openai` | `OPENAI_API_KEY`; optional `OPENAI_MODEL` | Responses |
+| `anthropic` (or `claude`) | `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL` | Claude Messages |
 | `azure_openai` | `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_DEPLOYMENT` | Azure v1 Responses |
 | `azure_foundry` | `AZURE_FOUNDRY_API_KEY`, `AZURE_FOUNDRY_ENDPOINT`, `AZURE_FOUNDRY_MODEL` | Azure v1 Chat Completions |
+
+To use Claude, securely set `ANTHROPIC_API_KEY` and select a model available to your account:
+
+```bash
+export MODEL_PROVIDER=anthropic
+export ANTHROPIC_MODEL=claude-sonnet-5-5
+streamlit run app.py
+```
 
 For example, after securely setting `AZURE_OPENAI_API_KEY` in your environment:
 
@@ -38,7 +47,7 @@ export AZURE_FOUNDRY_MODEL=YOUR-DEPLOYMENT-NAME
 streamlit run app.py
 ```
 
-Both Azure endpoints accept an HTTPS resource root or a full `/openai/v1/` base URL. Project URLs (`/api/projects/...`), legacy `/models` inference endpoints, and dated Azure APIs are not supported. Azure model settings must contain your deployment name, not necessarily the catalog model ID. Use a Responses-capable deployment for `azure_openai`; use a text chat deployment supporting system messages, `max_tokens`, `store=False`, and `tool_choice="none"` for `azure_foundry`. Unsupported requests surface as model errors; the app never retries with weaker security settings. This integration currently uses API keys, not Microsoft Entra ID.
+Both Azure endpoints accept an HTTPS resource root or a full `/openai/v1/` base URL. Project URLs (`/api/projects/...`), legacy `/models` inference endpoints, and dated Azure APIs are not supported. Azure model settings must contain your deployment name, not necessarily the catalog model ID. Use a Responses-capable deployment for `azure_openai`; use a text chat deployment supporting system messages, `max_tokens`, `store=False`, and `tool_choice="none"` for `azure_foundry`. The Claude adapter uses the Messages API and sends no tools. Anthropic does not expose a per-request equivalent to `store=False`; review Anthropic's data-retention terms and account controls before sending sensitive content. Unsupported requests surface as model errors; the app never retries with weaker security settings. Azure integration currently uses API keys, not Microsoft Entra ID.
 
 Missing settings disable generation for the selected provider. Unknown providers or invalid endpoints show a generic configuration error while security analysis remains available. There is no automatic fallback to another provider. Every adapter keeps the request and external text in separate messages, provides a higher-priority trust policy, disables tools, and sends `store=False`. That flag is not a guarantee of zero provider-side retention; review your Azure deployment's data and abuse-monitoring policies.
 
@@ -52,7 +61,8 @@ The model artifact, `prompt_injection_model.pkl`, is loaded locally by the detec
 
 ## Detection Flow
 
-- Enter the trusted user request separately from optional untrusted webpage/document content. The application stores and analyzes these sources separately and does not concatenate them.
+- Enter content in the single text box and select whether it is a trusted request or untrusted content. The application stores and analyzes these sources separately and does not concatenate them.
+- A trusted request is sent only when its analysis returns `ALLOW`. Untrusted content is analyzed as data; if it is suspicious, it is quarantined and not sent. If it is allowed, the model receives a fixed summarization task and the content in a separate untrusted-data field.
 - The trusted request determines whether the requested action itself should be allowed, reviewed, or blocked. A detected attack in external content raises the overall decision to `REVIEW`; it does not replace or override the user request.
 - The prompt-injection detector combines regex matches with a trained classifier.
 - The threat analyzer checks for explicit cyber-abuse indicators and ambiguous cyber language.
@@ -64,7 +74,7 @@ The app is wired through `src/secure_model.py`, which gates all model calls. The
 
 If the detector or its local classifier fails, the source result is `REVIEW` with a generic unavailable message. Audit logs contain source labels, decisions, and exception types, never submitted text. `REVIEW` and `BLOCK` results are marked quarantined and are not forwarded to a model.
 
-Every model adapter must be passed through `src.secure_model.secure_generate`. The gateway calls `src.security.can_forward_to_model(result)` before invoking it, only for successfully analyzed `ALLOW` requests. Its `ModelInput` keeps external content explicitly untrusted. Do not call provider adapters directly or flatten external content into the trusted request.
+Every model adapter must be passed through `src.secure_model.secure_generate`. The gateway calls `src.security.can_forward_to_model(result)` before invoking it for successfully analyzed `ALLOW` requests. Its `ModelInput` keeps external content explicitly untrusted. Do not call provider adapters directly or flatten external content into the trusted request.
 
 ## Generation Status
 

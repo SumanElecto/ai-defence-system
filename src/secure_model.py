@@ -2,7 +2,11 @@ import logging
 from dataclasses import dataclass
 from typing import Protocol
 
-from src.security import can_forward_to_model, evaluate_security
+from src.security import (
+    can_forward_to_model,
+    can_forward_trusted_request_only,
+    evaluate_security,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -17,6 +21,7 @@ class ModelInput:
 class ModelAdapter(Protocol):
     def generate(self, model_input: ModelInput) -> str:
         """Generate a response while preserving source trust labels."""
+        ...
 
 
 def _unavailable_source(error: Exception) -> dict:
@@ -87,6 +92,7 @@ def secure_generate(
     trusted_user_request: str,
     untrusted_external_content: str = "",
     model: ModelAdapter | None = None,
+    run_trusted_task_without_external: bool = False,
 ) -> dict:
     try:
         security_result = evaluate_security(
@@ -106,19 +112,35 @@ def secure_generate(
         "model_status": "quarantined",
         "model_response": None,
         "forwarded_to_model": False,
+        "filtered_task_forwarded": False,
     }
 
-    if not can_forward_to_model(security_result):
+    trusted_task_only = can_forward_trusted_request_only(
+        security_result,
+        confirmed_independent_task=run_trusted_task_without_external,
+    )
+    if trusted_task_only:
+        model_input = ModelInput(
+            trusted_user_request=trusted_user_request,
+            untrusted_external_content="",
+        )
+    elif can_forward_to_model(security_result):
+        model_input = ModelInput(
+            trusted_user_request=trusted_user_request,
+            untrusted_external_content=untrusted_external_content,
+        )
+    else:
         return result
 
     if model is None:
-        result["model_status"] = "not_configured"
+        result["model_status"] = (
+            "filtered_external_not_configured"
+            if trusted_task_only
+            else "not_configured"
+        )
         return result
 
-    model_input = ModelInput(
-        trusted_user_request=trusted_user_request,
-        untrusted_external_content=untrusted_external_content,
-    )
+    result["filtered_task_forwarded"] = trusted_task_only
     try:
         response = model.generate(model_input)
     except Exception as error:
@@ -126,12 +148,18 @@ def secure_generate(
             "Secure model adapter failed (error_type=%s)",
             type(error).__name__,
         )
-        result["model_status"] = "model_error"
+        result["model_status"] = (
+            "filtered_external_model_error"
+            if trusted_task_only
+            else "model_error"
+        )
         result["forwarded_to_model"] = True
         result["model_error_type"] = type(error).__name__
         return result
 
-    result["model_status"] = "responded"
+    result["model_status"] = (
+        "filtered_external_responded" if trusted_task_only else "responded"
+    )
     result["model_response"] = response
     result["forwarded_to_model"] = True
     return result

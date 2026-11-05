@@ -51,10 +51,10 @@ def normalize_security_text(prompt: str) -> str:
 
 ATTACK_PATTERNS = {
     "instruction_override": (
-        r"\b(ignore|disregard|forget|override)\b.{0,60}\b(instructions?|rules?)\b",
+        r"\b(ignore|disregard|forget|override)\b.{0,60}\b(instructions?|rules?|requests?)\b",
     ),
     "prompt_extraction": (
-        r"\b(reveal|show|print|expose|disclose)\b.{0,60}\b(system|hidden|secret)\b.{0,30}\b(prompt|instructions?)\b",
+        r"\b(reveal|show|print|expose|disclose|output)\b.{0,60}\b(system|hidden|secret)\b.{0,30}\b(prompt|instructions?)\b",
         r"\b(reveal|show|print|expose|disclose)\b.{0,60}\b(prompt|instructions?)\b",
         r"\b(reveal|show|print|expose|disclose|display|repeat|return|copy|provide|list)\b.{0,60}\b(system|hidden|secret|internal|private|confidential)\b.{0,30}\b(prompt|instructions?|message|configuration|setup|role|text)\b",
         r"\b(hidden|private|internal|confidential)\b.{0,30}\b(text|instructions?|prompt|message|configuration|setup|role)\b.{0,50}\b(tell|tells|guide|govern|control|shape|influence)\b.{0,35}\b(respond|answer|behavior|behaviour|role)\b",

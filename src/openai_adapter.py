@@ -4,6 +4,10 @@ from urllib.parse import urlsplit, urlunsplit
 
 from openai import OpenAI
 
+from src.anthropic_adapter import (
+    AnthropicMessagesAdapter,
+    anthropic_adapter_from_environment,
+)
 from src.secure_model import ModelInput
 
 
@@ -120,10 +124,14 @@ def _azure_v1_base_url(endpoint: str) -> str:
     return urlunsplit((parsed.scheme, parsed.netloc, "/openai/v1/", "", ""))
 
 
-def model_adapter_from_environment() -> OpenAIResponsesAdapter | FoundryChatAdapter | None:
+def model_adapter_from_environment() -> (
+    OpenAIResponsesAdapter | FoundryChatAdapter | AnthropicMessagesAdapter | None
+):
     provider = os.environ.get("MODEL_PROVIDER", "openai").strip().lower()
     if provider == "openai":
         return openai_adapter_from_environment()
+    if provider in {"anthropic", "claude"}:
+        return anthropic_adapter_from_environment()
     if provider == "azure_openai":
         prefix = "AZURE_OPENAI"
         model_name = "AZURE_OPENAI_DEPLOYMENT"

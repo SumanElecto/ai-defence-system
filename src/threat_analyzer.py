@@ -115,6 +115,7 @@ CYBER_ABUSE_PATTERNS = {
     "data_theft": [
         r"\b(?:steal|take|copy|exfiltrate)\b.{0,60}\b(?:private|confidential|customer|company|health|medical)\b.{0,40}\b(?:data|information|records|files)\b.{0,50}\b(?:from|on)\b.{0,40}\b(?:company|business|network|system|database)\b",
         r"\b(?:copy|steal|take|exfiltrate)\b.{0,50}\b(?:sensitive|private|confidential)\b.{0,30}\b(?:employee|patient|customer|personnel)\b.{0,40}\b(?:documents?|files?|records?)\b.{0,60}\b(?:internal storage|company system|database|shared repository)\b",
+        r"\b(?:extract|collect|gather|copy|steal)\b.{0,60}\b(?:api keys?|access tokens?|credentials?|secrets?)\b.{0,100}\b(?:upload|send|post|transmit|exfiltrate)\b.{0,80}\b(?:https?://|external|remote|attacker|third.party|outside|server|endpoint|url)",
     ],
 
     "service_disruption": [

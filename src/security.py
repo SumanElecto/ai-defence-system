@@ -171,3 +171,26 @@ def can_forward_to_model(security_result: dict) -> bool:
         and security_result.get("final_decision") == "ALLOW"
         and security_result.get("quarantined") is False
     )
+
+
+def can_forward_trusted_request_only(
+    security_result: dict,
+    *,
+    confirmed_independent_task: bool,
+) -> bool:
+    trusted_request = security_result.get("trusted_request_analysis")
+    external_content = security_result.get("untrusted_external_content_analysis")
+
+    return (
+        confirmed_independent_task is True
+        and
+        security_result.get("final_decision") == "REVIEW"
+        and security_result.get("analysis_available") is True
+        and security_result.get("external_content_quarantined") is True
+        and isinstance(trusted_request, dict)
+        and trusted_request.get("final_decision") == "ALLOW"
+        and trusted_request.get("analysis_available") is True
+        and isinstance(external_content, dict)
+        and external_content.get("final_decision") in {"BLOCK", "REVIEW"}
+        and external_content.get("analysis_available") is True
+    )
