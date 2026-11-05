@@ -17,7 +17,7 @@ if "security_canary" not in st.session_state:
         f"SYNTHETIC_CANARY_{token_hex(24).upper()}"
     )
 
-st.title("🛡️ AI Security Center")
+st.title("AI Security Center")
 
 st.markdown(
     "### Multi-Layer Prompt Injection and Cyber Threat Detection"

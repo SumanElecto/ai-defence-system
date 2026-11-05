@@ -2,6 +2,10 @@
 
 A local Streamlit prototype that screens user requests and external content for prompt-injection and cyber-threat indicators. It combines regular-expression rules, a TF-IDF/logistic-regression classifier, and a separate rule-based threat analyzer. Optional OpenAI, Anthropic Claude, Azure OpenAI, and Azure Foundry integrations generate responses only through the security gateway.
 
+![AI Security Center interface](docs/streamlit-ui.png)
+
+For vulnerability reporting, see [SECURITY.md](SECURITY.md). For setup and contribution guidance, see [CONTRIBUTING.md](CONTRIBUTING.md).
+
 ## Security Features
 
 - Multi-layer prompt-injection detection using rules and a locally trained classifier, plus explicit cyber-threat analysis.
