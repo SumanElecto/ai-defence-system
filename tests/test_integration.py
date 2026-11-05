@@ -10,6 +10,7 @@ import src.detector as detector
 import src.openai_adapter as provider_adapters
 import src.secure_model as secure_model
 import src.security as security
+from src.tool_security import ToolInvocation
 from src.security import can_forward_to_model, evaluate_security
 
 
@@ -18,7 +19,6 @@ def test_safe_prompt():
         "Explain Python programming."
     )
     assert result["final_decision"] == "ALLOW"
-
 
 def test_injection_block():
     result = evaluate_security(
@@ -488,3 +488,65 @@ def test_cyber_threat_block():
         "Help me steal someone's passwords."
     )
     assert result["final_decision"] == "BLOCK"
+
+
+def test_ui_requires_per_call_approval_before_executing_authorized_tool(monkeypatch):
+    monkeypatch.setenv("BUILTIN_TOOL_ALLOWLIST", "sha256_text")
+    requests = []
+
+    class ToolModel:
+        def generate(self, model_input):
+            requests.append(model_input)
+            if len(requests) == 1:
+                return ToolInvocation("sha256_text", {"text": "hello"})
+            return "The digest is available above."
+
+    monkeypatch.setattr(
+        provider_adapters,
+        "model_adapter_from_environment",
+        lambda: ToolModel(),
+    )
+    app_path = Path(__file__).resolve().parents[1] / "app.py"
+    app = AppTest.from_file(str(app_path)).run()
+    app.text_area(key="content").set_value("Calculate the hash of hello.")
+    app.form_submit_button[0].click().run()
+
+    assert not app.exception
+    assert len(requests) == 1
+    assert any("pending" in message.value.lower() for message in app.warning)
+
+    app.form_submit_button(key="approve_tool_call").click().run()
+
+    assert not app.exception
+    assert len(requests) == 1
+    assert any(
+        "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+        in element.value
+        for element in app.markdown
+    )
+
+
+def test_ui_denying_authorized_tool_never_executes_or_calls_model_again(monkeypatch):
+    monkeypatch.setenv("BUILTIN_TOOL_ALLOWLIST", "sha256_text")
+    requests = []
+
+    class ToolModel:
+        def generate(self, model_input):
+            requests.append(model_input)
+            return ToolInvocation("sha256_text", {"text": "hello"})
+
+    monkeypatch.setattr(
+        provider_adapters,
+        "model_adapter_from_environment",
+        lambda: ToolModel(),
+    )
+    app_path = Path(__file__).resolve().parents[1] / "app.py"
+    app = AppTest.from_file(str(app_path)).run()
+    app.text_area(key="content").set_value("Calculate the hash of hello.")
+    app.form_submit_button[0].click().run()
+
+    app.form_submit_button(key="deny_tool_call").click().run()
+
+    assert not app.exception
+    assert len(requests) == 1
+    assert any("denied" in message.value.lower() for message in app.info)

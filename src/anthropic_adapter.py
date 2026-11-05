@@ -4,6 +4,7 @@ from typing import Any
 from anthropic import Anthropic
 
 from src.secure_model import ModelInput, add_canary_policy
+from src.tool_security import ToolInvocation
 
 
 DEFAULT_MAX_OUTPUT_TOKENS = 800
@@ -26,7 +27,15 @@ class AnthropicMessagesAdapter:
         self.model = model
         self.max_output_tokens = max_output_tokens
 
-    def generate(self, model_input: ModelInput) -> str:
+    def generate(self, model_input: ModelInput) -> str | ToolInvocation:
+        tools = [
+            {
+                "name": tool.name,
+                "description": tool.description,
+                "input_schema": tool.input_schema,
+            }
+            for tool in model_input.authorized_tools
+        ]
         response = self._client.messages.create(
             model=self.model,
             max_tokens=self.max_output_tokens,
@@ -55,8 +64,22 @@ class AnthropicMessagesAdapter:
                     ],
                 }
             ],
-            tools=[],
+            tools=tools,
+            tool_choice={"type": "auto"} if tools else {"type": "none"},
         )
+
+        tool_calls = [
+            block
+            for block in response.content
+            if getattr(block, "type", None) == "tool_use"
+        ]
+        if getattr(response, "stop_reason", None) == "tool_use" or tool_calls:
+            if not tools or len(tool_calls) != 1:
+                raise RuntimeError("Anthropic returned an unauthorized tool call")
+            tool_call = tool_calls[0]
+            if not isinstance(getattr(tool_call, "input", None), dict):
+                raise RuntimeError("Anthropic returned malformed tool arguments")
+            return ToolInvocation(tool_call.name, tool_call.input)
 
         response_text = "\n".join(
             block.text

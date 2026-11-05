@@ -10,7 +10,8 @@ A local Streamlit prototype that screens user requests and external content for 
 - Input screening for common PII and secret patterns, including email addresses, phone numbers, SSNs, payment cards, API tokens, credential assignments, and private-key blocks. Detected input is blocked before it reaches a provider.
 - Output screening that redacts detected PII and secrets before display.
 - Random synthetic canaries scoped to each Streamlit session; responses containing a canary are withheld. The app does not keep conversation history or store canaries globally.
-- Provider safeguards including disabled tools, source-labeled inputs, no automatic provider fallback, and fail-closed handling when analysis is unavailable.
+- Provider safeguards including deny-by-default tools, source-labeled inputs, no automatic provider fallback, and fail-closed handling when analysis is unavailable.
+- Optional calculator and SHA-256 built-ins plus explicitly allowlisted remote MCP tools. Every model-proposed call requires per-call user approval, strict argument validation, and screened output. There is no multi-tool agent loop.
 - Privacy-aware logging that records decisions and exception types without submitted prompt text.
 
 Detection patterns are heuristic and incomplete. Passing screening does not prove content is safe, and provider-side retention policies still apply.
@@ -60,9 +61,29 @@ export AZURE_FOUNDRY_MODEL=YOUR-DEPLOYMENT-NAME
 streamlit run app.py
 ```
 
-Both Azure endpoints accept an HTTPS resource root or a full `/openai/v1/` base URL. Project URLs (`/api/projects/...`), legacy `/models` inference endpoints, and dated Azure APIs are not supported. Azure model settings must contain your deployment name, not necessarily the catalog model ID. Use a Responses-capable deployment for `azure_openai`; use a text chat deployment supporting system messages, `max_tokens`, `store=False`, and `tool_choice="none"` for `azure_foundry`. The Claude adapter uses the Messages API and sends no tools. Anthropic does not expose a per-request equivalent to `store=False`; review Anthropic's data-retention terms and account controls before sending sensitive content. Unsupported requests surface as model errors; the app never retries with weaker security settings. Azure integration currently uses API keys, not Microsoft Entra ID.
+Both Azure endpoints accept an HTTPS resource root or a full `/openai/v1/` base URL. Project URLs (`/api/projects/...`), legacy `/models` inference endpoints, and dated Azure APIs are not supported. Azure model settings must contain your deployment name, not necessarily the catalog model ID. Use a Responses-capable deployment for `azure_openai`; use a text chat deployment supporting system messages, `max_tokens`, `store=False`, and tool choice for `azure_foundry`. The Claude adapter uses the Messages API and receives tools only when explicitly allowlisted. Anthropic does not expose a per-request equivalent to `store=False`; review Anthropic's data-retention terms and account controls before sending sensitive content. Unsupported requests surface as model errors; the app never retries with weaker security settings. Azure integration currently uses API keys, not Microsoft Entra ID.
 
-Missing settings disable generation for the selected provider. Unknown providers or invalid endpoints show a generic configuration error while security analysis remains available. There is no automatic fallback to another provider. Every adapter keeps the request and external text in separate messages, provides a higher-priority trust policy, disables tools, and sends `store=False`. That flag is not a guarantee of zero provider-side retention; review your Azure deployment's data and abuse-monitoring policies.
+Missing settings disable generation for the selected provider. Unknown providers or invalid endpoints show a generic configuration error while security analysis remains available. There is no automatic fallback to another provider. Every adapter keeps the request and external text in separate messages and provides a higher-priority trust policy. Tool definitions are sent only for configured allowlisted tools; without an allowlist, tools remain disabled. OpenAI requests use `store=False`; Anthropic has no request-level equivalent. These settings are not guarantees of zero provider-side retention; review your provider's data and abuse-monitoring policies.
+
+## Tool Authorization
+
+Tools are disabled by default. To enable either bounded built-in, set a per-tool allowlist before starting the app:
+
+```bash
+export BUILTIN_TOOL_ALLOWLIST=calculator,sha256_text
+```
+
+The calculator accepts bounded arithmetic expressions; `sha256_text` hashes only the text supplied to it. A provider may propose a call, but the app displays its name and validated arguments and waits for explicit user approval before execution. Denial executes nothing. The result is screened and treated as untrusted data; if security analysis quarantines it, the app does not send it for a follow-up answer. The app does not run a multi-call agent loop.
+
+Remote MCP tools use Streamable HTTP over HTTPS only; local stdio processes are not supported. Set an exact comma-separated list of server tool names and the server URL:
+
+```bash
+export MCP_SERVER_URL=https://mcp.example.com/mcp
+export MCP_ALLOWED_TOOLS=lookup_record
+export MCP_SERVER_BEARER_TOKEN=your-server-token
+```
+
+The bearer token is optional when the server does not require it. Only names in `MCP_ALLOWED_TOOLS` are exposed, under the provider name `mcp_<name>`, and each call still requires approval. Use a dedicated remote server identity with least privilege. This app validates arguments and screens results but does not sandbox or control the remote server's execution; isolation, authorization, and side-effect policy must be enforced by that server. Do not treat user approval as a substitute for server-side controls.
 
 Start the app from the repository root:
 
@@ -104,8 +125,10 @@ Security decisions and provider outcomes are separate. An `ALLOW` result does no
 | `model_error` | The selected adapter was invoked but failed; no response is displayed. The provider may already have received the request. |
 | `sensitive_input_blocked` | PII, a secret, or a canary was detected in input; no provider call was made. |
 | `canary_leak` | A synthetic canary appeared in the response; the response was withheld. |
+| `tool_approval_required` | The provider proposed one allowlisted tool call; it is pending explicit user approval and has not run. |
+| `unauthorized_tool_call` / `tool_arguments_rejected` | The proposed tool was not allowlisted or its arguments failed validation; it was not run. |
 
-Provider errors do not override the security decision or trigger a fallback. Configuration errors are shown without exception details, and provider failure logs record only the exception type. Generated responses are displayed as text; the app does not execute generated code or tool calls. Sensitive-data and canary screening are defense-in-depth heuristics, not guarantees against all PII, secrets, or cross-session leakage.
+Provider errors do not override the security decision or trigger a fallback. Configuration errors are shown without exception details, and provider failure logs record only the exception type. Generated code is never executed. Tool calls run only after explicit per-call approval, and tool results remain untrusted data subject to the same quarantine policy. Sensitive-data and canary screening are defense-in-depth heuristics, not guarantees against all PII, secrets, or cross-session leakage.
 
 ## Azure Gateway Benchmark
 
@@ -224,16 +247,17 @@ GitHub Actions runs the test suite on each configured Python version.
 Provider and gateway regressions can also be run separately:
 
 ```bash
-python -m pytest -v tests/test_openai_adapter.py tests/test_secure_model.py tests/test_integration.py
+python -m pytest -v tests/test_openai_adapter.py tests/test_anthropic_adapter.py tests/test_secure_model.py tests/test_tool_security.py tests/test_integration.py
 ```
 
-These tests cover source separation, quarantine, fail-closed analysis, redacted errors, provider selection, Azure endpoint validation, disabled tools and response storage, and Streamlit provider wiring. Provider clients are mocked; tests require no API keys and make no live model requests. Passing them does not verify Azure deployment availability, permissions, quotas, model capabilities, or real-world detection reliability.
+These tests cover source separation, quarantine, fail-closed analysis, redacted errors, provider selection, Azure endpoint validation, deny-by-default tools, tool-call approval and validation, response storage, and Streamlit provider wiring. Provider clients are mocked; tests require no API keys and make no live model requests. Passing them does not verify Azure deployment availability, permissions, quotas, model capabilities, or real-world detection reliability.
 
 ## Project Layout
 
 - `app.py`: source-separated Streamlit interface, provider configuration, and gateway result display.
 - `src/security.py`: source-separated evaluation and trust-boundary decision policy.
 - `src/secure_model.py`: model adapter contract and enforced security gateway.
+- `src/tool_security.py`: tool allowlists, schema validation, bounded built-ins, and remote MCP execution.
 - `src/openai_adapter.py`: OpenAI/Azure OpenAI Responses and Azure Foundry chat adapters, with environment-based provider selection.
 - `src/detector.py`: prompt-injection rules and trained classifier.
 - `src/threat_analyzer.py`: explicit and ambiguous cyber-threat analysis.

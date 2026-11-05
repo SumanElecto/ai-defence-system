@@ -10,6 +10,7 @@ import src.detector as detector
 import src.secure_model as secure_model
 from src.evaluate_cyber_intent import load_dataset as load_cyber_intent_dataset
 from src.secure_model import ModelInput, secure_generate
+from src.tool_security import BUILTIN_TOOLS, ToolInvocation
 
 
 class RecordingModel:
@@ -103,7 +104,8 @@ def test_sensitive_input_blocks_before_model_call(
 
 def test_sensitive_model_output_is_redacted_before_returning_to_ui():
     class SensitiveResponseModel:
-        def generate(self, _model_input):
+        def generate(self, model_input):
+            assert model_input.trusted_user_request == "Explain Python programming."
             return (
                 "Contact jane.doe@example.com; "
                 "token=abcdefghijklmnop"
@@ -147,6 +149,56 @@ def test_canary_echo_suppresses_model_response():
         "decision": "BLOCK",
         "categories": ["synthetic_canary"],
     }
+
+
+def test_authorized_tool_call_is_held_for_approval_then_executed():
+    class ToolRequestModel:
+        def generate(self, model_input: ModelInput):
+            assert [tool.name for tool in model_input.authorized_tools] == ["sha256_text"]
+            return ToolInvocation("sha256_text", {"text": "hello"})
+
+    available_tools = (BUILTIN_TOOLS["sha256_text"],)
+    result = secure_generate(
+        "Calculate a hash.",
+        model=ToolRequestModel(),
+        authorized_tools=available_tools,
+    )
+
+    assert result["model_status"] == "tool_approval_required"
+    assert result["forwarded_to_model"] is True
+    assert result["pending_tool_call"].name == "sha256_text"
+
+    with pytest.raises(PermissionError):
+        secure_model.secure_execute_tool(
+            result["pending_tool_call"],
+            available_tools,
+            approval_granted=False,
+        )
+
+    tool_result = secure_model.secure_execute_tool(
+        result["pending_tool_call"],
+        available_tools,
+        approval_granted=True,
+    )
+    assert tool_result["text"] == (
+        "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+    )
+
+
+def test_unauthorized_tool_call_is_rejected_without_pending_approval():
+    class UnauthorizedToolModel:
+        def generate(self, model_input):
+            assert model_input.trusted_user_request == "Explain Python."
+            return ToolInvocation("run_shell", {"command": "id"})
+
+    result = secure_generate(
+        "Explain Python.",
+        model=UnauthorizedToolModel(),
+        authorized_tools=(BUILTIN_TOOLS["sha256_text"],),
+    )
+
+    assert result["model_status"] == "unauthorized_tool_call"
+    assert "pending_tool_call" not in result
 
 
 def test_blocked_prompt_is_not_split_or_forwarded_to_model():

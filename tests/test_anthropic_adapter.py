@@ -9,6 +9,7 @@ from src.anthropic_adapter import (
 )
 from src.openai_adapter import model_adapter_from_environment
 from src.secure_model import ModelInput, secure_generate
+from src.tool_security import BUILTIN_TOOLS, ToolInvocation
 
 
 def test_anthropic_adapter_preserves_source_labels_and_disables_tools():
@@ -62,6 +63,50 @@ def test_anthropic_adapter_rejects_responses_without_text():
         AnthropicMessagesAdapter(client, "claude-sonnet-5-5").generate(
             ModelInput("Explain Python.", "")
         )
+
+
+def test_anthropic_adapter_rejects_unexpected_tool_use():
+    client = SimpleNamespace(messages=SimpleNamespace(
+        create=lambda **_kwargs: SimpleNamespace(
+            stop_reason="tool_use",
+            content=[
+                SimpleNamespace(type="text", text="Response text."),
+                SimpleNamespace(type="tool_use", name="unexpected", input={}),
+            ],
+        )
+    ))
+
+    with pytest.raises(RuntimeError, match="unauthorized tool call"):
+        AnthropicMessagesAdapter(client, "claude-sonnet-5-5").generate(
+            ModelInput("Explain Python.", "")
+        )
+
+
+def test_anthropic_adapter_exposes_authorized_tools_and_normalizes_tool_use():
+    requests = []
+
+    def create_message(**kwargs):
+        requests.append(kwargs)
+        return SimpleNamespace(
+            stop_reason="tool_use",
+            content=[SimpleNamespace(
+                type="tool_use",
+                name="sha256_text",
+                input={"text": "hello"},
+            )],
+        )
+
+    client = SimpleNamespace(messages=SimpleNamespace(create=create_message))
+    adapter = AnthropicMessagesAdapter(client, "claude-sonnet-5-5")
+    result = adapter.generate(ModelInput(
+        "Calculate the hash.",
+        "",
+        authorized_tools=(BUILTIN_TOOLS["sha256_text"],),
+    ))
+
+    assert result == ToolInvocation("sha256_text", {"text": "hello"})
+    assert requests[0]["tool_choice"] == {"type": "auto"}
+    assert requests[0]["tools"][0]["name"] == "sha256_text"
 
 
 def test_anthropic_factory_requires_api_key_and_model(monkeypatch):

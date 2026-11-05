@@ -8,6 +8,13 @@ from src.security import (
     evaluate_security,
 )
 from src.sensitive_data import find_sensitive_data, redact_sensitive_data
+from src.tool_security import (
+    ToolDefinition,
+    ToolInvocation,
+    ToolPolicyError,
+    execute_approved_tool,
+    validate_tool_arguments,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -18,10 +25,17 @@ class ModelInput:
     trusted_user_request: str
     untrusted_external_content: str
     security_canary: str | None = None
+    authorized_tools: tuple[ToolDefinition, ...] = ()
+
+
+@dataclass(frozen=True)
+class ToolApproval:
+    name: str
+    arguments: dict
 
 
 class ModelAdapter(Protocol):
-    def generate(self, model_input: ModelInput) -> str:
+    def generate(self, model_input: ModelInput) -> str | ToolInvocation:
         """Generate a response while preserving source trust labels."""
         ...
 
@@ -105,6 +119,7 @@ def secure_generate(
     model: ModelAdapter | None = None,
     run_trusted_task_without_external: bool = False,
     security_canary: str | None = None,
+    authorized_tools: tuple[ToolDefinition, ...] = (),
 ) -> dict:
     try:
         security_result = evaluate_security(
@@ -163,12 +178,14 @@ def secure_generate(
             trusted_user_request=trusted_user_request,
             untrusted_external_content="",
             security_canary=security_canary,
+            authorized_tools=authorized_tools,
         )
     elif can_forward_to_model(security_result):
         model_input = ModelInput(
             trusted_user_request=trusted_user_request,
             untrusted_external_content=untrusted_external_content,
             security_canary=security_canary,
+            authorized_tools=authorized_tools,
         )
     else:
         return result
@@ -182,8 +199,29 @@ def secure_generate(
         return result
 
     result["filtered_task_forwarded"] = trusted_task_only
+    result["forwarded_to_model"] = True
     try:
         response = model.generate(model_input)
+        if isinstance(response, ToolInvocation):
+            authorized_by_name = {tool.name: tool for tool in authorized_tools}
+            selected_tool = authorized_by_name.get(response.name)
+            if selected_tool is None:
+                result["model_status"] = "unauthorized_tool_call"
+                return result
+            try:
+                validated_arguments = validate_tool_arguments(
+                    selected_tool,
+                    response.arguments,
+                )
+            except ToolPolicyError:
+                result["model_status"] = "tool_arguments_rejected"
+                return result
+            result["model_status"] = "tool_approval_required"
+            result["pending_tool_call"] = ToolApproval(
+                name=selected_tool.name,
+                arguments=validated_arguments,
+            )
+            return result
         if not isinstance(response, str):
             raise TypeError("model adapter returned a non-text response")
     except Exception as error:
@@ -196,7 +234,6 @@ def secure_generate(
             if trusted_task_only
             else "model_error"
         )
-        result["forwarded_to_model"] = True
         result["model_error_type"] = type(error).__name__
         return result
 
@@ -223,5 +260,26 @@ def secure_generate(
         "filtered_external_responded" if trusted_task_only else "responded"
     )
     result["model_response"] = safe_response
-    result["forwarded_to_model"] = True
     return result
+
+
+def secure_execute_tool(
+    tool_call: ToolApproval,
+    authorized_tools: tuple[ToolDefinition, ...],
+    *,
+    approval_granted: bool,
+    security_canary: str | None = None,
+) -> dict:
+    tool = next(
+        (candidate for candidate in authorized_tools if candidate.name == tool_call.name),
+        None,
+    )
+    if tool is None:
+        raise ToolPolicyError("Tool is not authorized")
+
+    return execute_approved_tool(
+        tool,
+        tool_call.arguments,
+        approved=approval_granted,
+        security_canary=security_canary,
+    )
