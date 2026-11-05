@@ -1,4 +1,6 @@
 
+from secrets import token_hex
+
 import streamlit as st
 
 from src.openai_adapter import model_adapter_from_environment
@@ -10,6 +12,11 @@ st.set_page_config(
     page_icon="🛡️",
     layout="wide"
 )
+
+if "security_canary" not in st.session_state:
+    st.session_state["security_canary"] = (
+        f"SYNTHETIC_CANARY_{token_hex(24).upper()}"
+    )
 
 st.title("🛡️ AI Security Center")
 
@@ -68,6 +75,7 @@ if submitted:
             trusted_user_request,
             external_content,
             model=model,
+            security_canary=st.session_state["security_canary"],
         )
         results = gateway_result["security"]
 
@@ -80,6 +88,12 @@ if submitted:
             st.error(
                 "🚨 BLOCKED — Suspicious untrusted content was quarantined; "
                 "nothing was sent to a model."
+            )
+
+        elif gateway_result["model_status"] == "sensitive_input_blocked":
+            st.error(
+                "Sensitive personal data or credentials were detected. "
+                "Nothing was sent to a model."
             )
 
         elif decision == "BLOCK":
@@ -96,6 +110,11 @@ if submitted:
             st.success("✅ ALLOW — No known threat indicators detected.")
             if model_configuration_failed:
                 st.error("Model configuration is unavailable; no request was sent.")
+            elif gateway_result["model_status"] == "canary_leak":
+                st.error(
+                    "A synthetic privacy canary appeared in the response. "
+                    "The response was withheld."
+                )
             elif gateway_result["model_status"] == "not_configured":
                 st.info(
                     "No model provider is configured; no request was sent. "
@@ -197,6 +216,8 @@ if submitted:
         with st.expander("View complete detection results"):
             st.json({
                 "security": results,
+                "input_screening": gateway_result.get("input_screening"),
+                "output_screening": gateway_result.get("output_screening"),
                 "model_status": gateway_result["model_status"],
                 "forwarded_to_model": gateway_result["forwarded_to_model"],
             })

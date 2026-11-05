@@ -8,7 +8,7 @@ from src.anthropic_adapter import (
     AnthropicMessagesAdapter,
     anthropic_adapter_from_environment,
 )
-from src.secure_model import ModelInput
+from src.secure_model import ModelInput, add_canary_policy
 
 
 DEFAULT_OPENAI_MODEL = "gpt-5.5"
@@ -29,7 +29,10 @@ class OpenAIResponsesAdapter:
     def generate(self, model_input: ModelInput) -> str:
         response = self._client.responses.create(
             model=self.model,
-            instructions=OPENAI_INSTRUCTIONS,
+            instructions=add_canary_policy(
+                OPENAI_INSTRUCTIONS,
+                model_input.security_canary,
+            ),
             input=[
                 {
                     "role": "user",
@@ -87,7 +90,13 @@ class FoundryChatAdapter:
         response = self._client.chat.completions.create(
             model=self.model,
             messages=[
-                {"role": "system", "content": OPENAI_INSTRUCTIONS},
+                {
+                    "role": "system",
+                    "content": add_canary_policy(
+                        OPENAI_INSTRUCTIONS,
+                        model_input.security_canary,
+                    ),
+                },
                 {"role": "user", "content": model_input.trusted_user_request},
                 {
                     "role": "user",

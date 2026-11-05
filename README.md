@@ -2,6 +2,19 @@
 
 A local Streamlit prototype that screens user requests and external content for prompt-injection and cyber-threat indicators. It combines regular-expression rules, a TF-IDF/logistic-regression classifier, and a separate rule-based threat analyzer. Optional OpenAI, Anthropic Claude, Azure OpenAI, and Azure Foundry integrations generate responses only through the security gateway.
 
+## Security Features
+
+- Multi-layer prompt-injection detection using rules and a locally trained classifier, plus explicit cyber-threat analysis.
+- Explicit trusted-request and untrusted-content modes; untrusted text is kept separate and treated as data, not instructions.
+- Gateway enforcement that blocks suspicious trusted requests and quarantines suspicious untrusted content before provider calls.
+- Input screening for common PII and secret patterns, including email addresses, phone numbers, SSNs, payment cards, API tokens, credential assignments, and private-key blocks. Detected input is blocked before it reaches a provider.
+- Output screening that redacts detected PII and secrets before display.
+- Random synthetic canaries scoped to each Streamlit session; responses containing a canary are withheld. The app does not keep conversation history or store canaries globally.
+- Provider safeguards including disabled tools, source-labeled inputs, no automatic provider fallback, and fail-closed handling when analysis is unavailable.
+- Privacy-aware logging that records decisions and exception types without submitted prompt text.
+
+Detection patterns are heuristic and incomplete. Passing screening does not prove content is safe, and provider-side retention policies still apply.
+
 ## Run Locally
 
 Use Python 3.13 through 3.15.2. The CI matrix covers Python 3.13, 3.14, and 3.15.2; local validation has been run on 3.15.2. Install the pinned runtime and test dependencies:
@@ -66,6 +79,9 @@ The model artifact, `prompt_injection_model.pkl`, is loaded locally by the detec
 - The trusted request determines whether the requested action itself should be allowed, reviewed, or blocked. A detected attack in external content raises the overall decision to `REVIEW`; it does not replace or override the user request.
 - The prompt-injection detector combines regex matches with a trained classifier.
 - The threat analyzer checks for explicit cyber-abuse indicators and ambiguous cyber language.
+- The secure gateway blocks detected PII or secrets before calling a provider. It scans emails, phone numbers, SSNs, Luhn-valid payment card numbers, common API-token formats, credential assignments, and private-key blocks. These patterns are heuristic and do not detect every sensitive value.
+- Responses are scanned before display; detected PII/secrets are replaced with category markers. Each Streamlit session gets a random synthetic canary in the provider system instructions. A response containing a canary is withheld. Canaries are session-local and are not logged or persisted by the app.
+- Streamlit session state is isolated per browser session and the app keeps no conversation history. Provider-side retention still applies; in particular, Anthropic has no request-level `store=False` equivalent.
 - The application returns `BLOCK` for a high-confidence threat in the trusted request, `REVIEW` when the external content is suspicious or the trusted request is ambiguous, and `ALLOW` when no known indicators match.
 
 `ALLOW` means that these known indicators did not match; it does not establish that a prompt is safe. The rule and model layers are heuristic and can disagree, especially on quoted attack text.
@@ -86,8 +102,10 @@ Security decisions and provider outcomes are separate. An `ALLOW` result does no
 | `not_configured` | Security analysis allowed the request, but no configured adapter was available; no provider call was made. |
 | `responded` | The selected adapter returned a text response. |
 | `model_error` | The selected adapter was invoked but failed; no response is displayed. The provider may already have received the request. |
+| `sensitive_input_blocked` | PII, a secret, or a canary was detected in input; no provider call was made. |
+| `canary_leak` | A synthetic canary appeared in the response; the response was withheld. |
 
-Provider errors do not override the security decision or trigger a fallback. Configuration errors are shown without exception details, and provider failure logs record only the exception type. Generated responses are displayed as text; the app does not execute generated code or tool calls. No output-security screening is implemented, so an input `ALLOW` is not a guarantee about generated content.
+Provider errors do not override the security decision or trigger a fallback. Configuration errors are shown without exception details, and provider failure logs record only the exception type. Generated responses are displayed as text; the app does not execute generated code or tool calls. Sensitive-data and canary screening are defense-in-depth heuristics, not guarantees against all PII, secrets, or cross-session leakage.
 
 ## Azure Gateway Benchmark
 

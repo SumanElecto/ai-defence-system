@@ -235,6 +235,48 @@ def test_confirmed_trusted_task_omits_quarantined_content_from_provider(provider
     assert malicious_external not in str(payload)
 
 
+@pytest.mark.parametrize("provider", ["responses", "foundry"])
+def test_openai_adapters_receive_canary_in_system_policy_and_withhold_echo(provider):
+    canary = "SYNTHETIC_CANARY_" + "EF" * 24
+    requests = []
+
+    def create_response(**kwargs):
+        requests.append(kwargs)
+        if provider == "responses":
+            return SimpleNamespace(output_text=f"Echo: {canary}")
+        return SimpleNamespace(choices=[SimpleNamespace(
+            message=SimpleNamespace(
+                content=f"Echo: {canary}",
+                tool_calls=None,
+            )
+        )])
+
+    if provider == "responses":
+        client = SimpleNamespace(responses=SimpleNamespace(create=create_response))
+        adapter = OpenAIResponsesAdapter(client, "test-model")
+    else:
+        client = SimpleNamespace(chat=SimpleNamespace(
+            completions=SimpleNamespace(create=create_response)
+        ))
+        adapter = FoundryChatAdapter(client, "test-model")
+
+    result = secure_generate(
+        "Explain Python programming.",
+        model=adapter,
+        security_canary=canary,
+    )
+    payload = requests[0]
+    system_policy = (
+        payload["instructions"]
+        if provider == "responses"
+        else payload["messages"][0]["content"]
+    )
+
+    assert canary in system_policy
+    assert result["model_status"] == "canary_leak"
+    assert result["model_response"] is None
+
+
 @pytest.mark.parametrize("content,tool_calls", [(None, None), (" ", None), ("Text", ["tool"])])
 def test_foundry_rejects_empty_text_and_tool_calls(content, tool_calls):
     client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(

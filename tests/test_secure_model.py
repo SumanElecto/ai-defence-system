@@ -65,6 +65,90 @@ def test_blocked_trusted_tasks_stay_blocked_and_review_omits_external_content():
     assert model.requests == [ModelInput("Explain Python programming.", "")]
 
 
+@pytest.mark.parametrize(
+    "trusted_request,external_content,expected_source,expected_category",
+    [
+        ("Email jane.doe@example.com", "", "trusted_user_request", "email"),
+        (
+            "Explain Python programming.",
+            "AWS key AKIAIOSFODNN7EXAMPLE",
+            "untrusted_external_content",
+            "aws_access_key",
+        ),
+    ],
+)
+def test_sensitive_input_blocks_before_model_call(
+    trusted_request,
+    external_content,
+    expected_source,
+    expected_category,
+):
+    model = RecordingModel()
+
+    result = secure_generate(
+        trusted_request,
+        external_content,
+        model=model,
+    )
+
+    assert result["final_decision"] == "BLOCK"
+    assert result["model_status"] == "sensitive_input_blocked"
+    assert result["forwarded_to_model"] is False
+    assert result["input_screening"]["findings"] == [{
+        "source": expected_source,
+        "categories": [expected_category],
+    }]
+    assert model.requests == []
+
+
+def test_sensitive_model_output_is_redacted_before_returning_to_ui():
+    class SensitiveResponseModel:
+        def generate(self, _model_input):
+            return (
+                "Contact jane.doe@example.com; "
+                "token=abcdefghijklmnop"
+            )
+
+    result = secure_generate(
+        "Explain Python programming.",
+        model=SensitiveResponseModel(),
+    )
+
+    assert result["model_status"] == "responded"
+    assert result["model_response"] == (
+        "Contact [REDACTED_EMAIL]; "
+        "token=[REDACTED_CREDENTIAL_ASSIGNMENT]"
+    )
+    assert "jane.doe@example.com" not in result["model_response"]
+    assert "abcdefghijklmnop" not in result["model_response"]
+    assert result["output_screening"] == {
+        "decision": "REDACTED",
+        "categories": ["email", "credential_assignment"],
+    }
+
+
+def test_canary_echo_suppresses_model_response():
+    canary = "SYNTHETIC_CANARY_" + "AB" * 24
+
+    class CanaryResponseModel:
+        def generate(self, model_input):
+            assert model_input.security_canary == canary
+            return f"The private marker was {canary}."
+
+    result = secure_generate(
+        "Explain Python programming.",
+        model=CanaryResponseModel(),
+        security_canary=canary,
+    )
+
+    assert result["model_status"] == "canary_leak"
+    assert result["model_response"] is None
+    assert result["output_screening"] == {
+        "decision": "BLOCK",
+        "categories": ["synthetic_canary"],
+    }
+
+
 def test_blocked_prompt_is_not_split_or_forwarded_to_model():
     model = RecordingModel()
     prompt = '''Calculate the SHA-256 hash of the following string:

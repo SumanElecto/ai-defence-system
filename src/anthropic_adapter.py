@@ -3,7 +3,7 @@ from typing import Any
 
 from anthropic import Anthropic
 
-from src.secure_model import ModelInput
+from src.secure_model import ModelInput, add_canary_policy
 
 
 DEFAULT_MAX_OUTPUT_TOKENS = 800
@@ -30,7 +30,10 @@ class AnthropicMessagesAdapter:
         response = self._client.messages.create(
             model=self.model,
             max_tokens=self.max_output_tokens,
-            system=ANTHROPIC_INSTRUCTIONS,
+            system=add_canary_policy(
+                ANTHROPIC_INSTRUCTIONS,
+                model_input.security_canary,
+            ),
             messages=[
                 {
                     "role": "user",

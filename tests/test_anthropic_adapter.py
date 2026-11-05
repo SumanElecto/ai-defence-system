@@ -145,3 +145,27 @@ def test_anthropic_adapter_runs_only_after_gateway_allows_request():
     assert blocked["final_decision"] == "REVIEW"
     assert blocked["forwarded_to_model"] is False
     assert len(requests) == 1
+
+
+def test_anthropic_adapter_receives_canary_in_system_policy_and_echo_is_withheld():
+    canary = "SYNTHETIC_CANARY_" + "CD" * 24
+    requests = []
+
+    def create_message(**kwargs):
+        requests.append(kwargs)
+        return SimpleNamespace(content=[SimpleNamespace(
+            type="text", text=f"Echo: {canary}"
+        )])
+
+    client = SimpleNamespace(messages=SimpleNamespace(create=create_message))
+    adapter = AnthropicMessagesAdapter(client, "claude-sonnet-5-5")
+    result = secure_generate(
+        "Explain Python programming.",
+        model=adapter,
+        security_canary=canary,
+    )
+
+    assert canary in requests[0]["system"]
+    assert all(canary not in block["text"] for block in requests[0]["messages"][0]["content"])
+    assert result["model_status"] == "canary_leak"
+    assert result["model_response"] is None
