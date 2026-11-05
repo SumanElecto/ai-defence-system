@@ -11,7 +11,6 @@ A local Streamlit prototype that screens user requests and external content for 
 - Output screening that redacts detected PII and secrets before display.
 - Random synthetic canaries scoped to each Streamlit session; responses containing a canary are withheld. The app does not keep conversation history or store canaries globally.
 - Provider safeguards including deny-by-default tools, source-labeled inputs, no automatic provider fallback, and fail-closed handling when analysis is unavailable.
-- Optional calculator and SHA-256 built-ins plus explicitly allowlisted remote MCP tools. Every model-proposed call requires per-call user approval, strict argument validation, and screened output. There is no multi-tool agent loop.
 - Privacy-aware logging that records decisions and exception types without submitted prompt text.
 
 Detection patterns are heuristic and incomplete. Passing screening does not prove content is safe, and provider-side retention policies still apply.
