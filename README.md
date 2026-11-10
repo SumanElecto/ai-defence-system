@@ -68,6 +68,90 @@ Both Azure endpoints accept an HTTPS resource root or a full `/openai/v1/` base 
 
 Missing settings disable generation for the selected provider. Unknown providers or invalid endpoints show a generic configuration error while security analysis remains available. There is no automatic fallback to another provider. Every adapter keeps the request and external text in separate messages and provides a higher-priority trust policy. Tool definitions are sent only for configured allowlisted tools; without an allowlist, tools remain disabled. OpenAI requests use `store=False`; Anthropic has no request-level equivalent. These settings are not guarantees of zero provider-side retention; review your provider's data and abuse-monitoring policies.
 
+## Gateway API for Other Applications
+
+The optional HTTP API wraps the same `secure_generate` gateway used by Streamlit.
+It supports all configured model providers, including Azure Foundry. Provider keys,
+endpoints, and deployments are configured on the gateway server, never in client requests.
+This adds an application integration boundary, not a production-grade security guarantee.
+
+Install the requirements above. Set `GATEWAY_API_KEY` to a cryptographically random
+secret of at least 32 characters using your secret manager or process environment;
+leading and trailing whitespace are rejected. Do not commit the key or put it in a URL.
+Configure the selected model provider on the server, then start the API locally:
+
+```bash
+python -m uvicorn src.gateway_api:app --host 127.0.0.1 --port 8000 --no-access-log
+```
+
+| Endpoint | Behavior |
+| --- | --- |
+| `POST /v1/evaluate` | Local screening only; never constructs a provider or sends input to one. |
+| `POST /v1/generate` | Screens input, calls the configured provider only when permitted, then screens output. |
+
+Both endpoints require `Authorization: Bearer <GATEWAY_API_KEY>`. Missing, incorrect,
+or non-bearer credentials return `401`; missing or invalid server authentication
+configuration returns `503`. Requests must contain JSON with separate source fields:
+
+```json
+{
+  "trusted_user_request": "Summarize this webpage.",
+  "untrusted_external_content": "This page contains ordinary public information.",
+  "run_trusted_task_without_external": false
+}
+```
+
+The external-content and confirmation fields are optional. Each text field is limited
+to 16,000 characters, with a 64 KiB total request-body limit, including chunked bodies.
+Blank trusted requests, extra fields, and incorrect types return a generic `422`;
+oversized bodies return `413`. Clients cannot select providers, configure endpoints,
+authorize tools, or execute tool calls through this API. Canaries are generated per
+generation request, not stored in global state or returned to the caller.
+
+For example, another application's Python backend can call the gateway using `httpx`:
+
+```python
+import os
+import httpx
+
+response = httpx.post(
+	"http://127.0.0.1:8000/v1/generate",
+	headers={"Authorization": f"Bearer {os.environ['GATEWAY_API_KEY']}"},
+	json={"trusted_user_request": "Explain Python programming."},
+	timeout=60.0,
+)
+response.raise_for_status()
+result = response.json()
+if result["model_status"] in {"responded", "filtered_external_responded"}:
+	print(result["model_response"])
+else:
+	print(result["final_decision"], result["model_status"])
+```
+
+Responses expose the final decision, model status, screened model response, forwarding
+flags, and input/output screening categories. They omit the internal security result,
+raw source context, exception details, and canary. Responses use `Cache-Control: no-store`.
+HTTP `200` means evaluation completed, not that generation succeeded or content is safe;
+inspect `final_decision`, `model_status`, and screening results. An evaluation-only
+`ALLOW` returns `model_status: not_configured` because no model was supplied, and does
+not provide output screening or authorize a later direct model call.
+
+Suspicious external content remains quarantined. Set `run_trusted_task_without_external`
+to `true` only after explicit user confirmation that the trusted task can be completed
+independently. The overall decision remains `REVIEW`; only the independently allowed
+trusted request may be forwarded, with external content omitted. Never automatically
+retry a rejected request with this flag enabled.
+
+Before exposing this service beyond localhost, put it behind HTTPS and an authenticated
+ingress with rate limits, concurrency limits, request timeouts, and restricted network
+access. Keep access/body logging, tracing, and error capture from recording credentials,
+prompts, or responses. The shared API key is intended for trusted backend applications,
+not browser code or tenant isolation; use per-client identity and authorization at the
+ingress for multiple applications. Do not expose the built-in server directly to the
+public internet. No browser CORS access or interactive API documentation is enabled.
+Remove direct provider access from callers where feasible: requests that bypass this
+gateway do not receive its protection. Provider retention policies still apply.
+
 ## Tool Authorization
 
 Tools are disabled by default. To enable either bounded built-in, set a per-tool allowlist before starting the app:
